@@ -7,15 +7,31 @@ module.exports =
     onDidActivatePackages ['tabs', 'pinned-tabs'], =>
       # pinned-tabs is delaying it's activation, so wait longer than it
       setTimeout =>
-        @activateAfterTabBar()
+        @activateAfterDependencies()
       , 5
     return
 
-  activateAfterTabBar: ->
+  activateAfterDependencies: ->
+    @subscriptions = new CompositeDisposable
+    @bars = []
+
+    container = atom.workspace.getCenter?() ? atom.workspace
+    @subscriptions.add container.observePanes (pane) =>
+      bar = new StackedTabBar pane
+      @bars.push(bar)
+      pane.onDidDestroy =>
+        @bars = (b for b in @bars when b isnt bar)
+
+  deactivate: ->
+    @subscriptions.dispose()
+    bar.destroy() for bar in @bars
+
+class StackedTabBar
+  constructor: (pane) ->
     ## Latch on center pane's tab bar
     atomTabs = atom.packages.getLoadedPackage('tabs').mainModule
     @tabBar = atomTabs.tabBarViews
-      .filter((tabBar) => tabBar.location is 'center')[0]
+      .filter((tabBar) => tabBar.pane is pane)[0]
 
     # I could easily get the pane from atom.workspace.getPanes()
     # but I need the tabBar for monkey-patching
@@ -101,7 +117,7 @@ module.exports =
       @recalculateLayout()
     return
 
-  deactivate: ->
+  destroy: ->
     ## Kill subscriptions
     @subscriptions.dispose()
     window.requestAnimationFrame =>
@@ -113,7 +129,6 @@ module.exports =
 
     ## Monkey-unpatch
     @tabBar.setActiveTab = @originalSetActiveTab.bind(@tabBar)
-
 
   onMouseWheel: (event) ->
     @recalculateLayout event.wheelDeltaX
