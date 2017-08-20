@@ -3,15 +3,17 @@
 module.exports =
 
   activate: ->
-    ## Latch on center pane's tab bar
-    atomTabs = atom.packages.getLoadedPackage('tabs').mainModule
-    atom.packages.onDidActivatePackage (packageObj) =>
-      if packageObj.name is 'tabs'
-        @activateAfterTabBar packageObj
+    ## We want to execute as soon as 'tabs' and 'pinned-tabs' have activated
+    onDidActivatePackages ['tabs', 'pinned-tabs'], =>
+      # pinned-tabs is delaying it's activation, so wait longer than it
+      setTimeout =>
+        @activateAfterTabBar()
+      , 5
     return
 
-  activateAfterTabBar: (atomTabsPackage) ->
-    atomTabs = atomTabsPackage.mainModule
+  activateAfterTabBar: ->
+    ## Latch on center pane's tab bar
+    atomTabs = atom.packages.getLoadedPackage('tabs').mainModule
     @tabBar = atomTabs.tabBarViews
       .filter((tabBar) => tabBar.location is 'center')[0]
 
@@ -22,6 +24,8 @@ module.exports =
     # Another way to get the element would be to get the first child of the pane
     @element = @tabBar.element
 
+    @pinnedTabs = atom.packages.getLoadedPackage('pinned-tabs')?.mainModule
+
     ## Subscribe to events, letting @tabBar to react first
     @subscriptions = new CompositeDisposable
 
@@ -30,6 +34,11 @@ module.exports =
 
     @subscriptions.add pane.onDidMoveItem ({item, newIndex}) =>
       @recalculateLayout()
+      # Pinned tabs animate the pinned tab's width
+      if @pinnedTabs?
+        setTimeout =>
+          @recalculateLayout()
+        , 300
 
     @subscriptions.add pane.onDidRemoveItem ({item}) =>
       @recalculateLayout()
@@ -73,6 +82,8 @@ module.exports =
     @scrollPos = @element.scrollLeft
     @element.classList.add('stacked-tab-bar')
     @element.addEventListener 'mousewheel', @onMouseWheel.bind(this)
+
+    @recalculateLayoutBasedOnTheme()
     return
 
   recalculateLayoutBasedOnTheme: ->
@@ -103,61 +114,88 @@ module.exports =
     @recalculateLayout event.wheelDeltaX
     return
 
+  # Trying to keep this as fast as possible, avoiding memory allocation
+  # and object field accesses
   recalculateLayout: (deltaX = 0) ->
     tabs = @element.children
     if tabs.length is 0
       return
 
+    # Get tab margin from first tab and cache it for this theme
     if !@tabMargin?
       tabStyle = window.getComputedStyle @element.children[0]
       @tabMargin = parseInt(tabStyle.marginLeft) +
         parseInt(tabStyle.marginRight)
 
-    availableWidth = @element.clientWidth - @padding
 
-    totalWidth = 0
+    normalTabsWidth = 0
+    numNormalTabs = 0
+    pinnedTabsWidth = 0
+    maybePinned = @pinnedTabs?
     for tab in tabs
-      totalWidth += tab.clientWidth + @tabMargin
-    numTabs = tabs.length
+      if maybePinned and @pinnedTabs.isPinned tab
+        pinnedTabsWidth += tab.clientWidth + @tabMargin
+      else
+        maybePinned = no
+        numNormalTabs++
+        normalTabsWidth += tab.clientWidth + @tabMargin
 
-    @scrollPos = Math.max 0,
-      Math.min totalWidth - availableWidth, @scrollPos - deltaX
+    totalWidth = @element.clientWidth
+    availableWidthForNormalTabs = totalWidth - @padding - pinnedTabsWidth
 
-    at = -@scrollPos
-    zindex = numTabs
+    @scrollPos = bounded 0, normalTabsWidth - availableWidthForNormalTabs,
+      @scrollPos - deltaX
+
+    at = 0
+    zIndex = numNormalTabs
     activeTabZIndexOffset = 1
     # using tabBar as optimization over classList
     activeTab = @tabBar.activeTab.element
+    normalTabs = 0
+    maybePinned = @pinnedTabs?
+    offsetForPinned = 0
     for tab, i in tabs
-      width = tab.clientWidth + @tabMargin
-      style = tab.style
-      leftBound = i * 10
-      rightBound = availableWidth - width + (i + 1 - numTabs) * 10
-      to = Math.max leftBound, Math.min rightBound, at
-      zIndexOffset = Math.sign to - at
-      isCovered = zIndexOffset isnt 0
-      tab.classList.toggle 'covered', isCovered
-      zindex +=
+      tabWidth = tab.clientWidth + @tabMargin
+      if maybePinned and @pinnedTabs.isPinned tab
+        to = at
+        isCovered = no
+      else
+        maybePinned = no
+        if normalTabs is 0
+          at = -@scrollPos
+        leftBound = normalTabs * 10
+        rightBound = availableWidthForNormalTabs - tabWidth +
+          (normalTabs + 1 - numNormalTabs) * 10
+        to = bounded leftBound, rightBound, at
+        zIndexOffset = Math.sign to - at
+        isCovered = zIndexOffset isnt 0
+        tab.classList.toggle 'covered', isCovered
+        offsetForPinned = pinnedTabsWidth
+        normalTabs++
+      zIndex +=
         if isCovered then zIndexOffset else activeTabZIndexOffset
-      style.left = "#{@paddingLeft + to}px"
+      style = tab.style
+      style.left = "#{offsetForPinned + @paddingLeft + to}px"
       # isPlaceholder could be duplicated here, but it would be just as fragile
       if not @tabBar.isPlaceholder tab
-        style.zIndex = zindex
-      at += width
+        style.zIndex = zIndex + if isCovered then 0 else numNormalTabs
+      at += tabWidth
       if tab is activeTab
         activeTabZIndexOffset = -1
 
-    @availableWidthInLastLayout = availableWidth
+    @availableWidthInLastLayout = availableWidthForNormalTabs
+    @totalWidthInLastLayout = totalWidth
+    @pinnedTabsWidth = pinnedTabsWidth
     return
 
   recalculateLayoutOnResize: ->
-    if @availableWidthInLastLayout isnt @element.clientWidth
+    if @totalWidthInLastLayout isnt @element.clientWidth
       @recalculateLayout()
     return
 
   recalculateLayoutToShow: (activeTab) ->
-    availableWidth = @element.clientWidth
-    pos = 0
+    availableWidth = @availableWidthInLastLayout
+    pos = @pinnedTabsWidth
     for tab in @element.children
       break if tab is activeTab
       pos += tab.clientWidth
@@ -172,3 +210,17 @@ module.exports =
 
     @element.scrollLeft = @scrollPos
     return
+
+bounded = (min, max, value) ->
+  Math.max(min, (Math.min max, value))
+
+onDidActivatePackages = (packageNames, cb) ->
+  numRequired = 0
+  numActivated = 0
+  for name in packageNames when atom.packages.isPackageLoaded name
+    numRequired++
+  atom.packages.onDidActivatePackage (somePackage) ->
+    if somePackage.name in packageNames
+      numActivated++
+      if numActivated is numRequired
+        cb()
