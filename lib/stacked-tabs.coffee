@@ -8,6 +8,7 @@ module.exports =
     atom.packages.onDidActivatePackage (packageObj) =>
       if packageObj.name is 'tabs'
         @activateAfterTabBar packageObj
+    return
 
   activateAfterTabBar: (atomTabsPackage) ->
     atomTabs = atomTabsPackage.mainModule
@@ -25,15 +26,12 @@ module.exports =
     @subscriptions = new CompositeDisposable
 
     @subscriptions.add pane.onDidAddItem ({item, index}) =>
-      # TODO: do I need set Immediate to avoid race condition?
       @recalculateLayout()
 
     @subscriptions.add pane.onDidMoveItem ({item, newIndex}) =>
-      # TODO: do I need set Immediate to avoid race condition?
       @recalculateLayout()
 
     @subscriptions.add pane.onDidRemoveItem ({item}) =>
-      # TODO: do I need set Immediate to avoid race condition?
       @recalculateLayout()
 
     @subscriptions.add pane.onDidChangeFlexScale =>
@@ -41,7 +39,6 @@ module.exports =
         @recalculateLayout()
 
     @element.addEventListener "dragover", =>
-      # TODO: do I need set Immediate to avoid race condition?
       @recalculateLayout()
 
     # TODO: no way to observe closing of side docks :(
@@ -52,8 +49,13 @@ module.exports =
     # Normal window resizing
     window.addEventListener 'resize', => @recalculateLayoutOnResize()
 
+    ## Kicks of first layout as well
+    atom.themes.onDidChangeActiveThemes =>
+      @recalculateLayoutBasedOnTheme()
+
     ## Monkey patch the tab bar
     # I use monkey-patching because I need to prevent the `scrollIntoView`
+    # in the original implementation
     stackedTabs = @
     setActiveTab = (tabView) ->
       if tabView? and tabView isnt @activeTab
@@ -62,7 +64,8 @@ module.exports =
         @activeTab.element.classList.add('active')
 
         # @activeTab.element.scrollIntoView(false)
-        stackedTabs.recalculateLayoutToShow @activeTab.element
+        window.requestAnimationFrame =>
+          stackedTabs.recalculateLayoutToShow @activeTab.element
 
     @tabBar.setActiveTab = setActiveTab.bind(@tabBar)
 
@@ -70,10 +73,18 @@ module.exports =
     @scrollPos = @element.scrollLeft
     @element.classList.add('stacked-tab-bar')
     @element.addEventListener 'mousewheel', @onMouseWheel.bind(this)
+    return
 
-    ## Kick of first layout
+  recalculateLayoutBasedOnTheme: ->
+    # Theme related state
     window.requestAnimationFrame =>
+      @tabMargin = null
+      tabBarStyle = window.getComputedStyle @element
+      @paddingLeft = parseInt tabBarStyle.paddingLeft
+      paddingRight = parseInt tabBarStyle.paddingRight
+      @padding = @paddingLeft + paddingRight
       @recalculateLayout()
+    return
 
   deactivate: ->
     ## Kill subscriptions
@@ -86,42 +97,63 @@ module.exports =
 
     ## Reset styles
     @element.classList.remove('stacked-tab-bar')
+    return
 
   onMouseWheel: (event) ->
     @recalculateLayout event.wheelDeltaX
+    return
 
   recalculateLayout: (deltaX = 0) ->
-    availableWidth = @element.clientWidth
+    tabs = @element.children
+    if tabs.length is 0
+      return
+
+    if !@tabMargin?
+      tabStyle = window.getComputedStyle @element.children[0]
+      @tabMargin = parseInt(tabStyle.marginLeft) +
+        parseInt(tabStyle.marginRight)
+
+    availableWidth = @element.clientWidth - @padding
 
     totalWidth = 0
-    for tab in @element.children
-      totalWidth += tab.clientWidth
-    numTabs = @element.children.length
+    for tab in tabs
+      totalWidth += tab.clientWidth + @tabMargin
+    numTabs = tabs.length
 
     @scrollPos = Math.max 0,
       Math.min totalWidth - availableWidth, @scrollPos - deltaX
 
     at = -@scrollPos
     zindex = numTabs
-    for tab, i in @element.children
-      width = tab.clientWidth
+    activeTabZIndexOffset = 1
+    # using tabBar as optimization over classList
+    activeTab = @tabBar.activeTab.element
+    for tab, i in tabs
+      width = tab.clientWidth + @tabMargin
       style = tab.style
       leftBound = i * 10
       rightBound = availableWidth - width + (i + 1 - numTabs) * 10
-      left = at < leftBound
-      right = at > rightBound
       to = Math.max leftBound, Math.min rightBound, at
-      zindex += Math.sign to - at
-      style.left = "#{to}px"
+      zIndexOffset = Math.sign to - at
+      isCovered = zIndexOffset isnt 0
+      tab.classList.toggle 'covered', isCovered
+      zindex +=
+        if isCovered then zIndexOffset else activeTabZIndexOffset
+      style.left = "#{@paddingLeft + to}px"
       # isPlaceholder could be duplicated here, but it would be just as fragile
       if not @tabBar.isPlaceholder tab
         style.zIndex = zindex
       at += width
-    @availableWidthInLastLayout = @element.clientWidth
+      if tab is activeTab
+        activeTabZIndexOffset = -1
+
+    @availableWidthInLastLayout = availableWidth
+    return
 
   recalculateLayoutOnResize: ->
     if @availableWidthInLastLayout isnt @element.clientWidth
       @recalculateLayout()
+    return
 
   recalculateLayoutToShow: (activeTab) ->
     availableWidth = @element.clientWidth
@@ -131,6 +163,7 @@ module.exports =
       pos += tab.clientWidth
     # As if to try to display the activeTab in the middle of the tab bar
     @recalculateLayout @scrollPos + availableWidth // 2 - pos
+    return
 
   resetLayout: ->
     for tab in @element.children
@@ -138,3 +171,4 @@ module.exports =
       tab.style.removeProperty 'zIndex'
 
     @element.scrollLeft = @scrollPos
+    return

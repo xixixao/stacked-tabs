@@ -13,7 +13,8 @@
     position: absolute;
     border-right: 1px solid @tab-border-color;
 
-    &:hover .close-icon {
+    &.covered .close-icon,
+    &.covered:hover .close-icon {
       display: none;
     }
 
