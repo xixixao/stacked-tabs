@@ -154,13 +154,16 @@ module.exports =
     maybePinned = @pinnedTabs?
     offsetForPinned = 0
     for tab, i in tabs
-      tabWidth = tab.clientWidth + @tabMargin
+      # isPlaceholder could be duplicated here, but it would be just as fragile
+      isPlaceholder = @tabBar.isPlaceholder tab
+      tabWidth = if isPlaceholder then 0 else tab.clientWidth + @tabMargin
+      placeholderOffset = if isPlaceholder then -@tabMargin else 0
       if maybePinned and @pinnedTabs.isPinned tab
         to = at
         isCovered = no
         zIndexBuffer = if tab is activeTab then numNormalTabs else 0
       else
-        maybePinned = no
+        maybePinned = !isPlaceholder
         if normalTabs is 0
           at = -@scrollPos
         leftBound = normalTabs * 10
@@ -172,13 +175,12 @@ module.exports =
         zIndexBuffer = if isCovered then 0 else numNormalTabs
         tab.classList.toggle 'covered', isCovered
         offsetForPinned = pinnedTabsWidth
-        normalTabs++
+        normalTabs++ unless isPlaceholder
       zIndex +=
         if isCovered then zIndexOffset else activeTabZIndexOffset
       style = tab.style
-      style.left = "#{offsetForPinned + @paddingLeft + to}px"
-      # isPlaceholder could be duplicated here, but it would be just as fragile
-      if not @tabBar.isPlaceholder tab
+      style.left = "#{placeholderOffset + offsetForPinned + @paddingLeft + to}px"
+      if not isPlaceholder
         style.zIndex = zIndex + zIndexBuffer
       at += tabWidth
       if tab is activeTab
