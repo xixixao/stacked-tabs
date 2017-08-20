@@ -47,20 +47,23 @@ module.exports =
       window.requestAnimationFrame =>
         @recalculateLayout()
 
-    @element.addEventListener "dragover", =>
-      @recalculateLayout()
+    @subscriptions.add atom.themes.onDidChangeActiveThemes =>
+      @recalculateLayoutBasedOnTheme()
+
+    @onDragOver = @onDragOver.bind(this)
+    @onMouseWheel = @onMouseWheel.bind(this)
+    @element.addEventListener 'dragover', @onDragOver
+    @element.addEventListener 'mousewheel', @onMouseWheel
 
     # TODO: no way to observe closing of side docks :(
 
+    @recalculateLayoutOnResize = @recalculateLayoutOnResize.bind(this)
+
     # Used to react to side docks resizing
-    window.addEventListener 'mouseup', => @recalculateLayoutOnResize()
+    window.addEventListener 'mouseup', @recalculateLayoutOnResize
 
     # Normal window resizing
-    window.addEventListener 'resize', => @recalculateLayoutOnResize()
-
-    ## Kicks of first layout as well
-    atom.themes.onDidChangeActiveThemes =>
-      @recalculateLayoutBasedOnTheme()
+    window.addEventListener 'resize', @recalculateLayoutOnResize
 
     ## Monkey patch the tab bar
     # I use monkey-patching because I need to prevent the `scrollIntoView`
@@ -76,13 +79,14 @@ module.exports =
         window.requestAnimationFrame =>
           stackedTabs.recalculateLayoutToShow @activeTab.element
 
+    @originalSetActiveTab = @tabBar.setActiveTab
     @tabBar.setActiveTab = setActiveTab.bind(@tabBar)
 
     ## Initialize state
     @scrollPos = @element.scrollLeft
     @element.classList.add('stacked-tab-bar')
-    @element.addEventListener 'mousewheel', @onMouseWheel.bind(this)
 
+    ## Kicks off first layout
     @recalculateLayoutBasedOnTheme()
     return
 
@@ -102,16 +106,21 @@ module.exports =
     @subscriptions.dispose()
     window.requestAnimationFrame =>
       @resetLayout()
-    @element.removeEventListener 'mousewheel', @onMouseWheel.bind(this)
-    window.removeEventListener 'mouseup', => @recalculateLayoutOnResize()
-    window.removeEventListener 'resize', => @recalculateLayoutOnResize()
+    @element.removeEventListener 'mousewheel', @onMouseWheel
+    @element.removeEventListener 'dragover', @onDragOver
+    window.removeEventListener 'mouseup', @recalculateLayoutOnResize
+    window.removeEventListener 'resize', @recalculateLayoutOnResize
 
-    ## Reset styles
-    @element.classList.remove('stacked-tab-bar')
-    return
+    ## Monkey-unpatch
+    @tabBar.setActiveTab = @originalSetActiveTab.bind(@tabBar)
+
 
   onMouseWheel: (event) ->
     @recalculateLayout event.wheelDeltaX
+    return
+
+  onDragOver: ->
+    @recalculateLayout()
     return
 
   # Trying to keep this as fast as possible, avoiding memory allocation
@@ -153,7 +162,7 @@ module.exports =
     normalTabs = 0
     maybePinned = @pinnedTabs?
     offsetForPinned = 0
-    for tab, i in tabs
+    for tab in tabs
       # isPlaceholder could be duplicated here, but it would be just as fragile
       isPlaceholder = @tabBar.isPlaceholder tab
       tabWidth = if isPlaceholder then 0 else tab.clientWidth + @tabMargin
@@ -229,6 +238,7 @@ module.exports =
       tab.style.removeProperty 'zIndex'
 
     @element.scrollLeft = @scrollPos
+    @element.classList.remove('stacked-tab-bar')
     return
 
 bounded = (min, max, value) ->
@@ -239,6 +249,15 @@ onDidActivatePackages = (packageNames, cb) ->
   numActivated = 0
   for name in packageNames when atom.packages.isPackageLoaded name
     numRequired++
+
+  # On our install
+  for name in packageNames
+    if atom.packages.isPackageActive name
+      numActivated++
+      if numActivated is numRequired
+        cb()
+
+  # On startup
   atom.packages.onDidActivatePackage (somePackage) ->
     if somePackage.name in packageNames
       numActivated++
