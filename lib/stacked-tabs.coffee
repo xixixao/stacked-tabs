@@ -150,7 +150,7 @@ module.exports =
     zIndex = numNormalTabs
     activeTabZIndexOffset = 1
     # using tabBar as optimization over classList
-    activeTab = @tabBar.activeTab.element
+    activeTab = @tabBar.activeTab?.element
     normalTabs = 0
     maybePinned = @pinnedTabs?
     offsetForPinned = 0
@@ -159,6 +159,7 @@ module.exports =
       if maybePinned and @pinnedTabs.isPinned tab
         to = at
         isCovered = no
+        zIndexBuffer = if tab is activeTab then numNormalTabs else 0
       else
         maybePinned = no
         if normalTabs is 0
@@ -169,6 +170,7 @@ module.exports =
         to = bounded leftBound, rightBound, at
         zIndexOffset = Math.sign to - at
         isCovered = zIndexOffset isnt 0
+        zIndexBuffer = if isCovered then 0 else numNormalTabs
         tab.classList.toggle 'covered', isCovered
         offsetForPinned = pinnedTabsWidth
         normalTabs++
@@ -178,7 +180,7 @@ module.exports =
       style.left = "#{offsetForPinned + @paddingLeft + to}px"
       # isPlaceholder could be duplicated here, but it would be just as fragile
       if not @tabBar.isPlaceholder tab
-        style.zIndex = zIndex + if isCovered then 0 else numNormalTabs
+        style.zIndex = zIndex + zIndexBuffer
       at += tabWidth
       if tab is activeTab
         activeTabZIndexOffset = -1
