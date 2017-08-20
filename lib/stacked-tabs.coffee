@@ -127,7 +127,6 @@ module.exports =
       @tabMargin = parseInt(tabStyle.marginLeft) +
         parseInt(tabStyle.marginRight)
 
-
     normalTabsWidth = 0
     numNormalTabs = 0
     pinnedTabsWidth = 0
@@ -187,7 +186,7 @@ module.exports =
 
     @availableWidthInLastLayout = availableWidthForNormalTabs
     @totalWidthInLastLayout = totalWidth
-    @pinnedTabsWidth = pinnedTabsWidth
+    @numNormalTabs = numNormalTabs
     return
 
   recalculateLayoutOnResize: ->
@@ -197,12 +196,29 @@ module.exports =
 
   recalculateLayoutToShow: (activeTab) ->
     availableWidth = @availableWidthInLastLayout
-    pos = @pinnedTabsWidth
+    activeTab = @tabBar.activeTab?.element
+
+    at = -@scrollPos
+    maybePinned = @pinnedTabs?
+    offset = 0
+    normalTabs = 0
     for tab in @element.children
-      break if tab is activeTab
-      pos += tab.clientWidth
-    # As if to try to display the activeTab in the middle of the tab bar
-    @recalculateLayout @scrollPos + availableWidth // 2 - pos
+      if maybePinned and @pinnedTabs.isPinned tab
+        break if tab is activeTab
+      else
+        maybePinned = no
+        tabWidth = tab.clientWidth + @tabMargin
+        if tab is activeTab
+          leftBound = normalTabs * 10
+          rightBound = availableWidth - tabWidth +
+            (normalTabs + 1 - @numNormalTabs) * 10
+          to = bounded leftBound, rightBound, at
+          offset = to - at
+          break
+        at += tabWidth
+        normalTabs++
+
+    @recalculateLayout offset
     return
 
   resetLayout: ->
