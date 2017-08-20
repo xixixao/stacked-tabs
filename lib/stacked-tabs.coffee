@@ -28,6 +28,8 @@ module.exports =
 
 class StackedTabBar
   constructor: (pane) ->
+    @subscriptions = new CompositeDisposable
+
     ## Latch on center pane's tab bar
     atomTabs = atom.packages.getLoadedPackage('tabs').mainModule
     @tabBar = atomTabs.tabBarViews
@@ -40,10 +42,13 @@ class StackedTabBar
     # Another way to get the element would be to get the first child of the pane
     @element = @tabBar.element
 
+    ## Take pinned-tabs into account, and might be installed after us
     @pinnedTabs = atom.packages.getLoadedPackage('pinned-tabs')?.mainModule
+    @subscriptions.add atom.packages.onDidActivatePackage (somePackage) =>
+      if somePackage.name is 'pinned-tabs'
+        @pinnedTabs = somePackage.mainModule
 
     ## Subscribe to events, letting @tabBar to react first
-    @subscriptions = new CompositeDisposable
 
     @subscriptions.add pane.onDidAddItem ({item, index}) =>
       @recalculateLayout()
@@ -154,7 +159,8 @@ class StackedTabBar
     normalTabsWidth = 0
     numNormalTabs = 0
     pinnedTabsWidth = 0
-    maybePinned = @pinnedTabs?
+    canHavePinned = @pinnedTabs?
+    maybePinned = canHavePinned
     for tab in tabs
       if maybePinned and @pinnedTabs.isPinned tab
         pinnedTabsWidth += tab.clientWidth + @tabMargin
@@ -175,7 +181,7 @@ class StackedTabBar
     # using tabBar as optimization over classList
     activeTab = @tabBar.activeTab?.element
     normalTabs = 0
-    maybePinned = @pinnedTabs?
+    maybePinned = canHavePinned
     offsetForPinned = 0
     for tab in tabs
       # isPlaceholder could be duplicated here, but it would be just as fragile
@@ -187,7 +193,7 @@ class StackedTabBar
         isCovered = no
         zIndexBuffer = if tab is activeTab then numNormalTabs else 0
       else
-        maybePinned = !isPlaceholder
+        maybePinned = isPlaceholder and canHavePinned
         if normalTabs is 0
           at = -@scrollPos
         leftBound = normalTabs * 10
