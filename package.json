@@ -1,9 +1,15 @@
 {
   "name": "stacked-tabs",
   "main": "./lib/stacked-tabs",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Display Atom editor tabs stacked just like in Sublime Text for better navigation",
-  "keywords": ["tabs", "stacked", "better", "sublime", "sublime text"],
+  "keywords": [
+    "tabs",
+    "stacked",
+    "better",
+    "sublime",
+    "sublime text"
+  ],
   "repository": "https://github.com/xixixao/stacked-tabs",
   "license": "MIT",
   "engines": {
